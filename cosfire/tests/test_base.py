@@ -110,7 +110,7 @@ class TestCosfire(unittest.TestCase):
     def test_cosfire__preset_1(self):
         im1 = cv2.imread("media/patron1.jpg", 0)
         im2 = cv2.imread("media/prueba1.jpg", 0)
-        for iter in range(1):
+        for _ in range(1):
             a = Cosfire(**preset_1)
             a.fit(im1)
             r = a.transform(im2)
@@ -174,7 +174,9 @@ class TestCosfire(unittest.TestCase):
         #     assert_almost_equal(result, expected_collection[key])
 
     def test_threshold_prototype_bank_of_responses(self):
-        self._maximum_response = max([value.max() for key, value in self._prototype_bank.items()])
+        self._maximum_response = max(
+            value.max() for key, value in self._prototype_bank.items()
+        )
         [cv2.threshold(src=image, dst=image, thresh=threshold * self._maximum_response,
                        maxval=self._maximum_response, type=cv2.THRESH_TOZERO)
          for key, image in self._prototype_bank.items()]  # Desired collateral effect: modify self.responses_map
@@ -254,7 +256,7 @@ class TestCosfireCircularGabor(unittest.TestCase):
             np.save('media/test__Circular_Gabor__compute_bank_of_responses__no_kwargs__pattern.npy', self.pattern)
             with PdfPages('test__Circular_Gabor__compute_bank_of_responses.pdf') as pdf:
                 for key, value in results_bank.items():
-                    file_name = 'media/test__Circular_Gabor__compute_bank_of_responses__no_kwargs__' + str(key) + '.npy'
+                    file_name = f'media/test__Circular_Gabor__compute_bank_of_responses__no_kwargs__{str(key)}.npy'
                     np.save(file_name, value)
                     fig = plt.figure()
                     plt.imshow(value, cmap='cool')
@@ -262,7 +264,7 @@ class TestCosfireCircularGabor(unittest.TestCase):
                     pdf.savefig(fig)
 
         for key in results_bank:
-            file_name = 'media/test__Circular_Gabor__compute_bank_of_responses__no_kwargs__' + str(key) + '.npy'
+            file_name = f'media/test__Circular_Gabor__compute_bank_of_responses__no_kwargs__{str(key)}.npy'
             expected = np.load(file_name)
             result = results_bank[key]
             assert_almost_equal(result, expected)
@@ -299,7 +301,7 @@ class TestCosfireCircularGabor(unittest.TestCase):
             np.save('media/test__threshold_prototype_bank_of_responses__pattern.npy', self.pattern)
             with PdfPages('test__threshold_prototype_bank_of_responses.pdf') as pdf:
                 for key, value in cosfire._prototype_bank.items():
-                    file_name = 'media/test__threshold_prototype_bank_of_responses_' + str(key) + '.npy'
+                    file_name = f'media/test__threshold_prototype_bank_of_responses_{str(key)}.npy'
                     np.save(file_name, value)
                     fig = plt.figure()
                     plt.imshow(value, cmap='cool')
@@ -307,7 +309,7 @@ class TestCosfireCircularGabor(unittest.TestCase):
                     pdf.savefig(fig)
 
         for key in cosfire._prototype_bank:
-            file_name = 'media/test__threshold_prototype_bank_of_responses_' + str(key) + '.npy'
+            file_name = f'media/test__threshold_prototype_bank_of_responses_{str(key)}.npy'
             expected = np.load(file_name)
             result = cosfire._prototype_bank[key]
             assert_almost_equal(result, expected)

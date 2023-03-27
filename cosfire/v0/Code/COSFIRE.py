@@ -73,9 +73,7 @@ class COSFIRE:
     
     # (1.2) Suppres Resposes
     def suppresResponsesT1(self):
-        eMax=[]
-        for i in self.input:
-            eMax.append(self.input[i].max())
+        eMax = [self.input[i].max() for i in self.input]
         self.maxi=max(eMax)
         for clav in self.input:
             for k in range(self.input[clav].shape[0]):
@@ -125,7 +123,7 @@ class COSFIRE:
                                 val=self.input[l][xi][yi]
                     listMax[k]=val
                     direcciones.append((xi,yi))
-                ss=int(360/16)
+                ss = 360 // 16
                 #nn=np.arange(360)
                 #plt.plot(nn,listMax)       
                 if len(np.unique(listMax))==1:
@@ -144,10 +142,9 @@ class COSFIRE:
                             for m in range(self.filterParam[3].size):
                                 par=(self.filterParam[2][l],self.filterParam[3][m])
                                 var=self.input[par][direcciones[index[k]][0]][direcciones[index[k]][1]]
-                                if var > self.t2*self.maxi:
-                                    if mx < var:
-                                        mx=var
-                                        ind=m
+                                if var > self.t2 * self.maxi and mx < var:
+                                    mx=var
+                                    ind=m
                             if mx !=-1:
                                 tupla=np.zeros(4)
                                 tupla[0]=self.rhoList[i]
@@ -168,46 +165,42 @@ class COSFIRE:
 
     #2.1 For each tuple in the set Sf compute response
     def computeTuples(self,inputImage):
-        #Aqui llamar funcion que rellena parametros para invarianzas
-        ope=[]
-        normal=[]
-        for i in range(len(self.operator)):
-            normal.append(self.operator[i])
-        ope.append(normal)
+        normal = [self.operator[i] for i in range(len(self.operator))]
+        ope = [normal]
         if self.invarianteReflexion==1:
             refleccion=[]
             for i in range(len(self.operator)):
                 a=(self.operator[i][0],np.pi-self.operator[i][1],self.operator[i][2],np.pi-self.operator[i][3])
                 refleccion.append(a)
             ope.append(refleccion)
-        for i in range(len(ope)):
-            for l in range(len(ope[i])):
+        for item in ope:
+            for l in range(len(item)):
                 for j in range(len(self.invarianteRotacion)):
                     for k in range(len(self.invarianteEscala)):
                         if self.nameFilter=='Gabor':
                             aux=np.zeros(4)
-                            aux[0]=ope[i][l][0]*self.invarianteEscala[k]
-                            aux[1]=ope[i][l][1]+self.invarianteRotacion[j]
-                            aux[2]=ope[i][l][2]*self.invarianteEscala[k]
-                            aux[3]=ope[i][l][3]+self.invarianteRotacion[j]
-                            self.operator1.append(aux) 
+                            aux[0] = item[l][0] * self.invarianteEscala[k]
+                            aux[1] = item[l][1] + self.invarianteRotacion[j]
+                            aux[2] = item[l][2] * self.invarianteEscala[k]
+                            aux[3] = item[l][3] + self.invarianteRotacion[j]
+                            self.operator1.append(aux)
                         elif self.nameFilter=='DoG':
                             aux=np.zeros(3)
-                            aux[0]=ope[i][l][0]*self.invarianteEscala[k]
-                            aux[1]=ope[i][l][1]+self.invarianteRotacion[j]
-                            aux[2]=ope[i][l][2]*self.invarianteEscala[k]
-                            self.operator1.append(aux) 
+                            aux[0] = item[l][0] * self.invarianteEscala[k]
+                            aux[1] = item[l][1] + self.invarianteRotacion[j]
+                            aux[2] = item[l][2] * self.invarianteEscala[k]
+                            self.operator1.append(aux)
         unicos={}
         for i in range(len(self.operator1)):
             if self.nameFilter=='Gabor':
                 a=(self.operator1[i][3],self.operator1[i][2])
-                if not a in unicos:
+                if a not in unicos:
                     l1=np.array(1*[a[0]])
                     l2=np.array(1*[a[1]])
                     tt=GF.getGaborResponse(inputImage,self.filterParam,l1,l2)
                     unicos[a]=tt[a]
             elif self.nameFilter=='DoG':
-                if not self.operator1[i][2] in unicos:
+                if self.operator1[i][2] not in unicos:
                     l1=np.array(1*[self.operator1[i][2]])
                     tt=DoG.getDoGResponse(inputImage,self.filterParam,l1)
                     unicos[self.operator1[i][2]]=tt[self.operator1[i][2]]
@@ -219,14 +212,13 @@ class COSFIRE:
                     sig=unicos[i][j][k]
                     if sig > max:
                         max=unicos[i][j][k]
-        for i in unicos:
+        for i, value in unicos.items():
             t=unicos[i].shape
             for j in range(t[0]):
                 for k in range(t[1]):
-                    if unicos[i][j][k]<max*self.t1:
+                    if value[j][k] < max * self.t1:
                         unicos[i][j][k]=0
-        unicos=self.blurGaussian(unicos) ##2.1.1 Hacemos Blur
-        return unicos
+        return self.blurGaussian(unicos)
     
     #(2.1.1)Blurr
     def blurGaussian(self,bankFilters):
@@ -237,7 +229,7 @@ class COSFIRE:
                 sigma=self.alpha*self.operator1[i][0] + self.sigma0
                 #cv2.imshow("wsw",cv2.GaussianBlur(bankFilters[a1], (15,15),sigma, sigma))
                 a2=(self.operator1[i][0],self.operator1[i][1],self.operator1[i][2],self.operator1[i][3])
-                if not a2 in dic:
+                if a2 not in dic:
                     dic[a2]=cv2.GaussianBlur(bankFilters[a1], (9,9),sigma, sigma)
             elif self.nameFilter=='DoG':
                 sigma=self.alpha*self.operator1[i][0] + self.sigma0
@@ -258,10 +250,7 @@ class COSFIRE:
                 for l in range(nc):
                     xx=int(k+x)
                     yy=int(l-y)
-                    if xx>=0 and xx<nr and yy>=0 and yy<nc:
-                        nw[k][l]=img[xx][yy]
-                    else:
-                        nw[k][l]=0
+                    nw[k][l] = img[xx][yy] if xx>=0 and xx<nr and yy>=0 and yy<nc else 0
             Resp[clave]=nw
         return Resp
     

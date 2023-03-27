@@ -23,19 +23,18 @@ class Pixel(NamedTuple):
 
     def is_inside(self, image):
         rows, cols = image.shape
-        is_pixel_inside_image = (0 <= self.row < rows) and (0 <= self.column < cols)
-        return is_pixel_inside_image
+        return (0 <= self.row < rows) and (0 <= self.column < cols)
 
     def maximum_response(self, bank):
-        maximum_response = 0
         for image in bank.values():
             some_response_map = image
             break  # I just want one image to check the size
 
-        if self.is_inside(some_response_map):
-            maximum_response = max((response[self] for response in bank.values()))
-
-        return maximum_response
+        return (
+            max((response[self] for response in bank.values()))
+            if self.is_inside(some_response_map)
+            else 0
+        )
 
     def evaluate_bank(self, bank):
         for value in bank.values():
@@ -146,7 +145,9 @@ class Cosfire:
 
     # (1.2) Suppress Responses
     def threshold_prototype_bank_of_responses(self, threshold, **kwargs):
-        self._maximum_response = max([value.max() for key, value in self._prototype_bank.items()])
+        self._maximum_response = max(
+            value.max() for key, value in self._prototype_bank.items()
+        )
         [cv2.threshold(src=image, dst=image, thresh=threshold * self._maximum_response,
                        maxval=self._maximum_response, type=cv2.THRESH_TOZERO)
          for key, image in self._prototype_bank.items()]  # Desired collateral effect: modify self.responses_map
@@ -193,7 +194,7 @@ class Cosfire:
     def average_response(self, bank, operator, **kwargs):
         rows, cols = bank[operator[0]].shape
         resp = np.ones((rows, cols))
-        ρ_maximum = max([tupla.ρ for tupla in operator])
+        ρ_maximum = max(tupla.ρ for tupla in operator)
         tuple_weight_σ = np.sqrt(-((ρ_maximum ** 2) / (2 * np.log(0.5))))
 
         sum_of_scalar_power = 0
@@ -212,13 +213,22 @@ def _Circular_Gabor__compute_bank_of_responses(self, image, **kwargs):
     if 'λ_array' in kwargs:
         λ_array = kwargs['λ_array']
 
-    response_dict = {
-        GaborKey(θ=θ, λ=λ): cv2.filter2D(src=image, ddepth=self.ddepth,
-                                         kernel=cv2.getGaborKernel(ksize=ksize, sigma=σ, theta=θ, lambd=λ, gamma=γ,
-                                                                   psi=ψ, ktype=ktype))
-        for θ, λ in itertools.product(θ_array, λ_array)}
-    # TODO: DANIEL ACOSTA COMMENT: Faltaria normalizar cada respuesta de Gabor
-    return response_dict
+    return {
+        GaborKey(θ=θ, λ=λ): cv2.filter2D(
+            src=image,
+            ddepth=self.ddepth,
+            kernel=cv2.getGaborKernel(
+                ksize=ksize,
+                sigma=σ,
+                theta=θ,
+                lambd=λ,
+                gamma=γ,
+                psi=ψ,
+                ktype=ktype,
+            ),
+        )
+        for θ, λ in itertools.product(θ_array, λ_array)
+    }
 
 
 def _Circular_DoG__compute_bank_of_responses(self, image, **kwargs):
@@ -317,12 +327,12 @@ def _Circular_Gabor__compute_tuples(self, inputImage, **kwargs):
     unicos = {}
     for tupla in self._Sf_invariant:
         gabor_key = GaborKey(θ=tupla.θ, λ=tupla.λ)
-        if not gabor_key in unicos:
+        if gabor_key not in unicos:
             θ_array = np.array([gabor_key.θ])
             λ_array = np.array([gabor_key.λ])
             tt = self.compute_bank_of_responses(inputImage, θ_array=θ_array, λ_array=λ_array, **kwargs)
             unicos[gabor_key] = tt[gabor_key]
-    maximum = max([value.max() for key, value in unicos.items()])
+    maximum = max(value.max() for key, value in unicos.items())
     [cv2.threshold(src=image, dst=image, thresh=self.threshold_1 * maximum, maxval=maximum, type=cv2.THRESH_TOZERO)
      for key, image in unicos.items()]
     unicos = self.blur_gaussian(unicos)  ##2.1.1 Hacemos Blur
@@ -341,11 +351,11 @@ def _Circular_DoG__compute_tuples(self, inputImage, **kwargs):
         self._Sf_invariant.append(new_tupla)
     unicos = {}
     for tupla in self._Sf_invariant:
-        if not tupla[2] in unicos:
+        if tupla[2] not in unicos:
             l1 = np.array(1 * [tupla[2]])
             tt = self.compute_bank_of_responses(inputImage, self.filter_parameters, l1)
             unicos[tupla[2]] = tt[tupla[2]]
-    maximum = max([value.max() for key, value in unicos.items()])
+    maximum = max(value.max() for key, value in unicos.items())
     [cv2.threshold(src=image, dst=image, thresh=self.threshold_1 * maximum,
                    maxval=maximum, type=cv2.THRESH_TOZERO)
      for key, image in unicos.items()]

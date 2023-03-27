@@ -64,9 +64,7 @@ def ClassDIGITOS():
         l = []
         cont = 0
         j = 0
-        while 1:
-            if cont == M:
-                break
+        while 1 and cont != M:
             if train_set[1][j] == i:
                 im = train_set[0][j].reshape(28, -1).copy()
                 l.append(im)
@@ -145,9 +143,7 @@ def ClassFASHION():
         l = []
         cont = 0
         j = 0
-        while 1:
-            if cont == M:
-                break
+        while 1 and cont != M:
             if y_train[j] == i:
                 im = X_train[j].reshape(28, 28).copy()
                 l.append(im)
@@ -230,16 +226,21 @@ def viewPattern(im1, im2, radio):
     for i in range(im1.shape[0] - 2):
         for j in range(im2.shape[1] - 2):
             if im1[i + 1][j + 1] != 0:
-                if im1[i + 2][j + 1] != 0 or im1[i][j + 1] != 0 or im1[i + 1][j + 2] != 0 or im1[i + 1][j] != 0:
-                    mask[i + 1][j + 1] = cont
-                else:
+                if (
+                    im1[i + 2][j + 1] == 0
+                    and im1[i][j + 1] == 0
+                    and im1[i + 1][j + 2] == 0
+                    and im1[i + 1][j] == 0
+                ):
                     cont = cont + 1
-                    mask[i + 1][j + 1] = cont
                     l.append((i + 1, j + 1))
+                mask[i + 1][j + 1] = cont
     phi = np.arange(360) * np.pi / 180.0
-    for i in range(len(l)):
+    for item in l:
         for j in range(len(phi)):
-            im2[int(l[i][0] - radio * np.sin(phi[j]))][int(l[i][1] + radio * np.cos(phi[j]))] = 0
+            im2[int(item[0] - radio * np.sin(phi[j]))][
+                int(item[1] + radio * np.cos(phi[j]))
+            ] = 0
     cv2.imshow("dasd", im2)
 
 
