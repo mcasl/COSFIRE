@@ -64,3 +64,14 @@ docs/_build/
 
 # PyBuilder
 target/
+
+# Python / uv
+.venv/
+__pycache__/
+*.egg-info/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
