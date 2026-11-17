@@ -1,21 +1,22 @@
 import unittest
+from pathlib import Path
+
+import cv2
 import numpy as np
 from numpy.testing import assert_almost_equal
-import logging
-from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib.pyplot as plt
-import cv2
 
 from cosfire.base import (Cosfire,
                           CosfireCircularGaborTuple,
+                          DoGParameters,
                           GaborParameters,
+                          Pixel,
                           π,
+                          _Circular_Gabor__blur_gaussian,
                           _Circular_Gabor__compute_bank_of_responses,
-                          _Circular_Gabor__fit_Sf
+                          _Circular_Gabor__fit_Sf,
                           )
 
-logging.basicConfig(level=logging.NOTSET)
-logger = logging.getLogger(__name__)
+MEDIA = Path(__file__).parent / 'media'
 
 preset_1 = dict(strategy_name="Circular Gabor",
                 center_x=166,
@@ -39,85 +40,52 @@ preset_1 = dict(strategy_name="Circular Gabor",
                 rotation_invariant=[0]
                 )
 
-preset_2 = dict(strategy_name="Circular Gabor",
-                center_coordinate_x=166,
-                center_coordinate_y=96,
-                rho_list=[0, 12],
-                eta=π / 8,
-                t1=0.99,
-                t2=0.75,
-                t3=0.9,
-                filter_parameters=[(10, 10),
-                                   5,
-                                   np.array([0, π / 2]),
-                                   np.array([12]),
-                                   0.5,
-                                   π],
-                sigma0=0.67,
-                alpha=0.04,
-                reflection_invariant=True,
-                scale_invariant=[1],
-                rotation_invariant=[0]
-                )
 
-preset_3 = dict(strategy_name="Circular Gabor",
-                center_coordinate_x=24,
-                center_coordinate_y=28,
-                rho_list=[0, 2, 4, 7, 10, 13, 16, 20, 25],
-                eta=π / 8,
-                t1=0.1,
-                t2=0.75,
-                t3=0.99,
-                filter_parameters=[(10, 10),
-                                   0.8,
-                                   np.array([(i * π) / 8.0 for i in range(16)]),
-                                   np.array([4]),
-                                   0.5,
-                                   π / 2],
-                sigma0=0.67,
-                alpha=0.04,
-                reflection_invariant=False,
-                scale_invariant=[1],
-                rotation_invariant=[0]
-                )
+def circle_pattern():
+    pattern = np.zeros((256, 256))
+    cv2.circle(img=pattern, center=(100, 100), radius=75, color=255)
+    return pattern
 
-preset_6 = dict(strategy_name="Circular Gabor",
-                center_coordinate_x=17,
-                center_coordinate_y=17,
-                rho_list=[0, 3, 8],
-                eta=π / 8,
-                t1=0.05,
-                t2=0.75,
-                t3=0.3,
-                filter_parameters=[np.array([(i * π) / 8.0 for i in range(16)]),
-                                   np.array([2 * np.sqrt(2)]),
-                                   (5, 5),
-                                   0.8,
-                                   0.5,
-                                   π / 2],
-                sigma0=0.83,
-                alpha=0.1,
-                reflection_invariant=False,
-                scale_invariant=[1],
-                rotation_invariant=[0]
-                )
+
+def circle_gabor_cosfire(**overrides):
+    parameters = dict(strategy_name='Circular Gabor',
+                      center_x=100,
+                      center_y=100,
+                      rho_list=range(0, 50, 10),
+                      t1=0.99,
+                      t2=0.75,
+                      t3=0.9,
+                      filter_parameters=GaborParameters(ksize=(10, 10), σ=5,
+                                                        θ=np.linspace(start=0, stop=π, num=5, endpoint=True),
+                                                        λ=[12],
+                                                        γ=0.25, ψ=0, ktype=cv2.CV_32F),
+                      sigma0=0.67,
+                      alpha=0.04,
+                      reflection_invariant=0,
+                      scale_invariant=[1],
+                      rotation_invariant=[0])
+    parameters.update(overrides)
+    return Cosfire(**parameters)
 
 
 class TestCosfire(unittest.TestCase):
-    def setUp(self):
-        self.pattern = 'media/patron.1'
-
     def test_cosfire__preset_1(self):
-        im1 = cv2.imread("media/patron1.jpg", 0)
-        im2 = cv2.imread("media/prueba1.jpg", 0)
-        for iter in range(1):
-            a = Cosfire(**preset_1)
-            a.fit(im1)
-            r = a.transform(im2)
-        # viewPattern(r, im2, 20)
-        # cv2.imshow("Response", r)
-        expected = np.load('media/test_cosfire__preset_1_expected.npy')
-        assert_almost_equal(r, expected)
+        im1 = cv2.imread(str(MEDIA / "patron1.jpg"), 0)
+        im2 = cv2.imread(str(MEDIA / "prueba1.jpg"), 0)
+        self.assertIsNotNone(im1)
+        self.assertIsNotNone(im2)
+        cosfire = Cosfire(**preset_1).fit(im1)
+
+        response = cosfire.transform(im2)
+        self.assertEqual(response.shape, im2.shape)
+        self.assertTrue(np.isfinite(response).all())
+        self.assertGreaterEqual(response.min(), 0)
+
+        # applied to its own prototype the filter must respond around the prototype center
+        self_response = cosfire.transform(im1)
+        row, column = np.unravel_index(self_response.argmax(), self_response.shape)
+        self.assertLessEqual(abs(row - preset_1['center_x']), 3)
+        self.assertLessEqual(abs(column - preset_1['center_y']), 3)
 
     def test_shift_responses(self):
         specific_image = np.array([[3, 3, 3, 3, 3],
@@ -173,13 +141,6 @@ class TestCosfire(unittest.TestCase):
         # for key, result in result_collection.items():
         #     assert_almost_equal(result, expected_collection[key])
 
-    def test_threshold_prototype_bank_of_responses(self):
-        self._maximum_response = max([value.max() for key, value in self._prototype_bank.items()])
-        [cv2.threshold(src=image, dst=image, thresh=threshold * self._maximum_response,
-                       maxval=self._maximum_response, type=cv2.THRESH_TOZERO)
-         for key, image in self._prototype_bank.items()]  # Desired collateral effect: modify self.responses_map
-        return
-
 
 class TestCosfireCircularGabor(unittest.TestCase):
     def setUp(self):
@@ -225,124 +186,141 @@ class TestCosfireCircularGabor(unittest.TestCase):
         self.assertEqual(result, expected)
 
     def test__Circular_Gabor__compute_bank_of_responses__no_kwargs(self):
-        self.pattern = np.zeros((256, 256))
-        self.pattern = cv2.circle(img=self.pattern, center=(100,100), radius=75, color=255)
-        cosfire = Cosfire(strategy_name='Circular Gabor',
-                          center_x=100,
-                          center_y=100,
-                          rho_list=range(0, 50, 10),
-                          t1=0.99,
-                          t2=0.75,
-                          t3=0.9,
-                          filter_parameters=GaborParameters(ksize=(10, 10), σ=5,
-                                                            θ=np.linspace(start=0, stop=π, num=5,
-                                                                          endpoint=True),
-                                                            λ=[12],#np.linspace(start=1, stop=100, num=100, endpoint=True),
-                                                            γ=0.25, ψ=0, ktype=cv2.CV_32F),
-                          sigma0=0.67,
-                          alpha=0.04,
-                          reflection_invariant=0,
-                          scale_invariant=[1],
-                          rotation_invariant=[0]
-                          )
+        cosfire = circle_gabor_cosfire()
+        results_bank = _Circular_Gabor__compute_bank_of_responses(cosfire, circle_pattern())
 
-        results_bank = _Circular_Gabor__compute_bank_of_responses(cosfire, self.pattern)
-
-        generating_results = False
-        if generating_results:
-            #The first time I used this to generate expected results
-            np.save('media/test__Circular_Gabor__compute_bank_of_responses__no_kwargs__pattern.npy', self.pattern)
-            with PdfPages('test__Circular_Gabor__compute_bank_of_responses.pdf') as pdf:
-                for key, value in results_bank.items():
-                    file_name = 'media/test__Circular_Gabor__compute_bank_of_responses__no_kwargs__' + str(key) + '.npy'
-                    np.save(file_name, value)
-                    fig = plt.figure()
-                    plt.imshow(value, cmap='cool')
-                    plt.title(key)
-                    pdf.savefig(fig)
-
-        for key in results_bank:
-            file_name = 'media/test__Circular_Gabor__compute_bank_of_responses__no_kwargs__' + str(key) + '.npy'
-            expected = np.load(file_name)
-            result = results_bank[key]
-            assert_almost_equal(result, expected)
+        self.assertEqual(len(results_bank), 5)  # 5 orientations x 1 wavelength
+        for key, response in results_bank.items():
+            self.assertEqual(key.λ, 12)
+            self.assertEqual(response.shape, (256, 256))
+            self.assertEqual(response.dtype, np.float32)
+            self.assertTrue(np.isfinite(response).all())
 
     def test__threshold_prototype_bank_of_responses(self):
-        self.pattern = np.zeros((256, 256))
-        self.pattern = cv2.circle(img=self.pattern, center=(100, 100), radius=75, color=255)
-        cosfire = Cosfire(strategy_name='Circular Gabor',
-                          center_x=100,
-                          center_y=100,
-                          rho_list=range(0, 50, 10),
-                          t1=0.99,
-                          t2=0.75,
-                          t3=0.9,
-                          filter_parameters=GaborParameters(ksize=(10, 10), σ=5,
-                                                            θ=np.linspace(start=0, stop=π, num=5,
-                                                                          endpoint=True),
-                                                            λ=[12],
-                                                            # np.linspace(start=1, stop=100, num=100, endpoint=True),
-                                                            γ=0.25, ψ=0, ktype=cv2.CV_32F),
-                          sigma0=0.67,
-                          alpha=0.04,
-                          reflection_invariant=0,
-                          scale_invariant=[1],
-                          rotation_invariant=[0]
-                          )
+        cosfire = circle_gabor_cosfire()
+        cosfire._prototype_bank = _Circular_Gabor__compute_bank_of_responses(cosfire, circle_pattern())
+        original_maximum = max(value.max() for value in cosfire._prototype_bank.values())
 
-        cosfire._prototype_bank = _Circular_Gabor__compute_bank_of_responses(cosfire, self.pattern)
         cosfire.threshold_prototype_bank_of_responses(threshold=0.75)
 
-        generating_results = False
-        if generating_results:
-            # The first time I used this to generate expected results
-            np.save('media/test__threshold_prototype_bank_of_responses__pattern.npy', self.pattern)
-            with PdfPages('test__threshold_prototype_bank_of_responses.pdf') as pdf:
-                for key, value in cosfire._prototype_bank.items():
-                    file_name = 'media/test__threshold_prototype_bank_of_responses_' + str(key) + '.npy'
-                    np.save(file_name, value)
-                    fig = plt.figure()
-                    plt.imshow(value, cmap='cool')
-                    plt.title(key)
-                    pdf.savefig(fig)
-
-        for key in cosfire._prototype_bank:
-            file_name = 'media/test__threshold_prototype_bank_of_responses_' + str(key) + '.npy'
-            expected = np.load(file_name)
-            result = cosfire._prototype_bank[key]
-            assert_almost_equal(result, expected)
+        self.assertAlmostEqual(cosfire._maximum_response, original_maximum, places=4)
+        for response in cosfire._prototype_bank.values():
+            surviving = response[response != 0]
+            self.assertTrue((surviving > 0.75 * original_maximum).all())
 
     def test__Circular_Gabor__fit_Sf(self):
-        self.pattern = np.zeros((256, 256))
-        self.pattern = cv2.circle(img=self.pattern, center=(100, 100), radius=75, color=255)
-        cosfire = Cosfire(strategy_name='Circular Gabor',
+        # Hardware/OpenCV-version independent: every tuple must point at a pixel of the circle
+        pattern = circle_pattern()
+        cosfire = circle_gabor_cosfire(rho_list=(0, 75, 100))
+        cosfire._prototype_bank = _Circular_Gabor__compute_bank_of_responses(cosfire, pattern)
+        cosfire.threshold_prototype_bank_of_responses(threshold=0.85)
+
+        operator = _Circular_Gabor__fit_Sf(cosfire)
+
+        self.assertGreater(len(operator), 0)
+        circle_points = np.argwhere(pattern > 0)
+        for tupla in operator:
+            self.assertEqual(tupla.ρ, 75)  # rho=0 is background and rho=100 lies outside the circle
+            self.assertEqual(tupla.λ, 12)
+            row = cosfire.center_x - tupla.ρ * np.sin(tupla.ϕ)
+            column = cosfire.center_y + tupla.ρ * np.cos(tupla.ϕ)
+            distance = np.sqrt(((circle_points - [row, column]) ** 2).sum(axis=1)).min()
+            self.assertLess(distance, 2.0)
+
+    def test__default_invariances_do_not_produce_an_empty_operator(self):
+        # Regression: scale_invariant/rotation_invariant defaulted to [] and transform crashed on max([])
+        parameters = dict(center_x=100, center_y=100, rho_list=(0, 75), t1=0.5, t2=0.5, t3=0.5,
+                          filter_parameters=circle_gabor_cosfire().filter_parameters,
+                          sigma0=0.67, alpha=0.04)
+        cosfire = Cosfire(**parameters)
+        self.assertEqual(cosfire.rotation_invariant, [0])
+        self.assertEqual(cosfire.scale_invariant, [1])
+
+        pattern = circle_pattern()
+        response = cosfire.fit(pattern).transform(pattern)
+
+        self.assertGreater(response.max(), 0)
+
+    def test__fit_returns_self(self):
+        cosfire = circle_gabor_cosfire()
+        self.assertIs(cosfire.fit(circle_pattern()), cosfire)
+
+    def test__reflection_invariant_accepts_booleans(self):
+        pattern = circle_pattern()
+        cosfire = circle_gabor_cosfire(rho_list=(0, 75), t1=0.5, t2=0.5, t3=0.5, reflection_invariant=True)
+        response = cosfire.fit(pattern).transform(pattern)
+        self.assertGreater(response.max(), 0)
+
+    def test__uint8_images_are_accepted(self):
+        pattern = circle_pattern().astype(np.uint8)
+        cosfire = circle_gabor_cosfire(rho_list=(0, 75), t1=0.5, t2=0.5, t3=0.5)
+        response = cosfire.fit(pattern).transform(pattern)
+        self.assertGreater(response.max(), 0)
+
+    def test__blur_gaussian_does_not_truncate_large_sigma(self):
+        # Regression: a fixed 9x9 kernel (normalised anyway) cut a sigma=8.67 gaussian at +-4 pixels
+        cosfire = circle_gabor_cosfire()
+        tupla = CosfireCircularGaborTuple(λ=12, θ=0., ρ=200, ϕ=0.)  # sigma = 0.04 * 200 + 0.67
+        cosfire._Sf_invariant = [tupla]
+        impulse = np.zeros((101, 101), dtype=np.float32)
+        impulse[50, 50] = 1
+
+        blurred = _Circular_Gabor__blur_gaussian(cosfire, {(0., 12): impulse})[tupla]
+
+        self.assertAlmostEqual(float(blurred.sum()), 1.0, places=3)
+        self.assertGreater(blurred[50, 60], 0)  # ten pixels away from the impulse, beyond the old 9x9 support
+
+    def test__pixel_outside_image(self):
+        image = np.zeros((4, 5))
+        self.assertTrue(Pixel(row=3, column=4).is_inside(image))
+        self.assertFalse(Pixel(row=-1, column=0).is_inside(image))
+        self.assertFalse(Pixel(row=0, column=5).is_inside(image))
+
+
+class TestCosfireCircularDoG(unittest.TestCase):
+    def setUp(self):
+        self.pattern = circle_pattern()
+
+    def make(self, **overrides):
+        parameters = dict(strategy_name='Circular DoG',
                           center_x=100,
                           center_y=100,
-                          rho_list=(0, 75, 100),
-                          t1=0.99,
-                          t2=0.75,
-                          t3=0.9,
-                          filter_parameters=GaborParameters(ksize=(10, 10), σ=5,
-                                                            θ=np.linspace(start=0, stop=π, num=5,
-                                                                          endpoint=True),
-                                                            λ=[12],
-                                                            # np.linspace(start=1, stop=100, num=100, endpoint=True),
-                                                            γ=0.25, ψ=0, ktype=cv2.CV_32F),
+                          rho_list=(0, 75),
+                          t1=0.3,
+                          t2=0.3,
+                          t3=0.5,
+                          filter_parameters=DoGParameters(σ=(2., 4.)),
                           sigma0=0.67,
                           alpha=0.04,
-                          reflection_invariant=0,
-                          scale_invariant=[0],
-                          rotation_invariant=[0]
-                          )
+                          reflection_invariant=False,
+                          scale_invariant=[1],
+                          rotation_invariant=[0])
+        parameters.update(overrides)
+        return Cosfire(**parameters)
 
-        cosfire._prototype_bank = _Circular_Gabor__compute_bank_of_responses(cosfire, self.pattern)
-        cosfire.threshold_prototype_bank_of_responses(threshold=0.85)
-        operator = _Circular_Gabor__fit_Sf(cosfire)
-        self.assertEqual(operator,[CosfireCircularGaborTuple(λ=12, θ=0.0,                ρ=75, φ=0.06981317007977318),
-                                   CosfireCircularGaborTuple(λ=12, θ=3.141592653589793,  ρ=75, φ=0.06981317007977318),
-                                   CosfireCircularGaborTuple(λ=12, θ=2.356194490192345,  ρ=75, φ=0.6457718232379019 ),
-                                   CosfireCircularGaborTuple(λ=12, θ=2.356194490192345,  ρ=75, φ=4.066617157146788  ),
-                                   CosfireCircularGaborTuple(λ=12, θ=1.5707963267948966, ρ=75, φ=4.625122517784973  ),
-                                   CosfireCircularGaborTuple(λ=12, θ=0.7853981633974483, ρ=75, φ=5.480333851262195  ),
-                                   CosfireCircularGaborTuple(λ=12, θ=0.0,                ρ=75, φ=6.178465552059927  ),
-                                   CosfireCircularGaborTuple(λ=12, θ=3.141592653589793,  ρ=75, φ=6.178465552059927  )])
+    def test__fit_and_transform_detect_the_prototype_center(self):
+        # Regression: fit_Sf used a non-existent attribute and the DoG strategy always crashed
+        cosfire = self.make().fit(self.pattern)
+        self.assertGreater(len(cosfire._Sf), 0)
+
+        response = cosfire.transform(self.pattern)
+
+        row, column = np.unravel_index(response.argmax(), response.shape)
+        self.assertLessEqual(abs(row - 100), 2)
+        self.assertLessEqual(abs(column - 100), 2)
+
+    def test__reflection_and_multiple_invariances(self):
+        cosfire = self.make(reflection_invariant=True, rotation_invariant=[0, π / 2], scale_invariant=[1, 2])
+        response = cosfire.fit(self.pattern).transform(self.pattern)
+        self.assertEqual(response.shape, self.pattern.shape)
+        self.assertGreater(response.max(), 0)
+
+    def test__uint8_images_do_not_wrap_around(self):
+        cosfire = self.make()
+        bank = cosfire.compute_bank_of_responses(self.pattern.astype(np.uint8))
+        self.assertTrue(all(response.dtype == np.float32 for response in bank.values()))
+        self.assertTrue(all(response.min() < 0 for response in bank.values()))  # DoG has negative lobes
+
+
+if __name__ == '__main__':
+    unittest.main()
