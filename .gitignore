@@ -75,3 +75,5 @@ dist/
 
 # macOS
 .DS_Store
+doc/sg_execution_times.rst
+doc/modules/generated/

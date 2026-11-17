@@ -1,4 +1,4 @@
-# Python CircleCI 2.0 configuration file
+# CircleCI configuration: tests and documentation, managed with uv.
 #
 # Check https://circleci.com/docs/2.0/language-python/ for more details
 #
@@ -7,12 +7,13 @@ jobs:
   build:
 
     docker:
-      - image: mcasl/circleci_cosfire:0.0.1
+      - image: ghcr.io/astral-sh/uv:python3.14-bookworm
         environment:
         - USERNAME: "COSFIRE"
         - DOC_REPO: "COSFIRE"
         - DOC_URL: ""
         - EMAIL: "cosfire.project@gmail.com"
+        - UV_LINK_MODE: copy
 
     working_directory: ~/COSFIRE
 
@@ -30,27 +31,24 @@ jobs:
 
       - restore_cache:
           keys:
-          - v1-dependencies-{{ checksum "requirements.txt" }}
-          # fallback to using the latest  cache if no exact match is found
-          - v1-dependencies-
+          - v2-uv-{{ checksum "uv.lock" }}
+          # fallback to using the latest cache if no exact match is found
+          - v2-uv-
 
       - run:
           name: Install dependencies
-          command: |
-            python3 -m venv %HOME/venv
-            . $HOME/venv/bin/activate
-            pip install -r requirements.txt
+          command: uv sync --locked --group docs
+
       - save_cache:
           paths:
-            - $HOME/venv
-          key: v1-dependencies-{{ checksum "requirements.txt" }}
+            - ~/.cache/uv
+          key: v2-uv-{{ checksum "uv.lock" }}
 
       - run:
           name: Run tests
           command: |
-            . $HOME/venv/bin/activate
             mkdir test-reports
-            python -m pytest --junitxml=test-reports/junit.xml cosfire/tests
+            uv run --locked pytest --junitxml=test-reports/junit.xml
 
       - store_test_results:
             path: test-reports
@@ -61,11 +59,8 @@ jobs:
       - run:
           name: Make HTML documentation
           command: |
-            . $HOME/venv/bin/activate
-            python setup.py clean
-            python setup.py develop
-            set -o pipefail && cd doc && make html 2>&1 | tee ~/log.txt
-            sudo cat ~/log.txt && if grep -q "Traceback (most recent call last):" ~/log.txt; then false; else true; fi
+            set -o pipefail && uv run --locked make -C doc html 2>&1 | tee ~/log.txt
+            if grep -q "Traceback (most recent call last):" ~/log.txt; then false; else true; fi
 
       - deploy:
           name: Push Documentation to Github Pages
@@ -76,9 +71,4 @@ jobs:
 
       - store_artifacts:
           path: doc/_build/html
-          destination: ~/log.txt
-
-
-
-
-
+          destination: html
