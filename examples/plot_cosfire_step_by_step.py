@@ -8,8 +8,6 @@ Let's create a demo shape with a couple of rectangles.
 import numpy as np
 import cv2
 from cosfire.base import (Cosfire,
-                          CosfireCircularGaborTuple,
-                          GaborKey,
                           GaborParameters,
                           π,
                           )

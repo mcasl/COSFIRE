@@ -52,6 +52,10 @@ class GaborParameters(NamedTuple):
     ktype: int = cv2.CV_32F
 
 
+class DoGParameters(NamedTuple):
+    σ: tuple  # iterable with the scales of the difference-of-Gaussians filters
+
+
 class GaborKey(NamedTuple):
     θ: float
     λ: float
@@ -99,8 +103,9 @@ class Cosfire:
         self.σ0 = sigma0
         self.threshold_3 = t3
         self.reflection_invariant = reflection_invariant
-        self.scale_invariant = [] if scale_invariant is None else scale_invariant
-        self.rotation_invariant = [] if rotation_invariant is None else rotation_invariant
+        # An empty list would produce an empty operator, so the neutral values are the default
+        self.scale_invariant = [1] if scale_invariant is None else scale_invariant
+        self.rotation_invariant = [0] if rotation_invariant is None else rotation_invariant
         self.ddepth = ddepth
 
         strategies = strategies_dictionary[self.strategy_name]
@@ -126,6 +131,7 @@ class Cosfire:
         # Manolo: This is an optimization possibility but requires to modify the iteration on θ, λ during the calculation of the pixel responses
         # self._prototype_bank = {key: value for key, value in self._prototype_bank.items() if value.max() > self._maximum_response * self.threshold_2}
         self._Sf = self.fit_Sf()  # 1.3
+        return self
 
     # 2-Apply the COSFIRE filter
     def transform(self, X, **kwargs):
@@ -167,13 +173,13 @@ class Cosfire:
     # (2.2) Shift
     def shift_responses(self, responses, **kwargs):
         response_maps = dict.fromkeys(responses)
-        for tupla, responses in responses.items():
-            rows, cols = responses.shape
+        for tupla, response in responses.items():
+            rows, cols = response.shape
             x = -tupla.ρ * cos(tupla.ϕ)
             y = tupla.ρ * sin(tupla.ϕ)
             M = np.float32([[1, 0, x],
                             [0, 1, y]])
-            dst = cv2.warpAffine(responses, M, (cols, rows), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+            dst = cv2.warpAffine(response, M, (cols, rows), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
             response_maps[tupla] = dst
         return response_maps
 
@@ -205,6 +211,30 @@ class Cosfire:
         return resp
 
 
+def _gaussian_blur(image, σ):
+    """Gaussian blur whose kernel size is derived from σ (a fixed small kernel truncates large σ)."""
+    if σ <= 0:
+        return image.copy()
+    return cv2.GaussianBlur(image, (0, 0), σ)
+
+
+def _circle_peaks(self, ρ):
+    """Pixels of the circle of radius ρ around the center and the indexes of the response peaks along it."""
+    ϕ_array = np.linspace(start=0, stop=2 * π, num=360, endpoint=False)
+    pixel_list = [Pixel(row=floor(self.center_x - ρ * sin(ϕ)), column=floor(self.center_y + ρ * cos(ϕ)))
+                  for ϕ in ϕ_array]
+    maximum_responses_array = np.array([pixel.maximum_response(bank=self._prototype_bank)
+                                        for pixel in pixel_list])
+    if len(np.unique(maximum_responses_array)) == 1:
+        return pixel_list, []
+    maximum_responses_array_augmented = np.zeros(maximum_responses_array.size + 1)
+    maximum_responses_array_augmented[0] = maximum_responses_array[-1]
+    maximum_responses_array_augmented[1:] = maximum_responses_array
+    peak_indexes = - 1 + peakutils.peak.indexes(maximum_responses_array_augmented, thres=0.2,
+                                                min_dist=22)  # 22=360/16
+    return pixel_list, peak_indexes
+
+
 def _Circular_Gabor__compute_bank_of_responses(self, image, **kwargs):
     ksize, σ, θ_array, λ_array, γ, ψ, ktype = self.filter_parameters
     if 'θ_array' in kwargs:
@@ -222,12 +252,13 @@ def _Circular_Gabor__compute_bank_of_responses(self, image, **kwargs):
 
 
 def _Circular_DoG__compute_bank_of_responses(self, image, **kwargs):
+    σ_array = kwargs.get('σ_array', self.filter_parameters.σ)
+    image = np.asarray(image, dtype=np.float32)  # unsigned integer images would wrap around on subtraction
     response = {}
-    for σ in self.filter_parameters.σ:
-        g1 = cv2.GaussianBlur(image, (3, 3), σ)
-        g2 = cv2.GaussianBlur(image, (3, 3), 0.5 * σ)
-        r = g1 - g2
-        response[σ] = r
+    for σ in σ_array:
+        g1 = cv2.GaussianBlur(image, (0, 0), σ)
+        g2 = cv2.GaussianBlur(image, (0, 0), 0.5 * σ)
+        response[σ] = g1 - g2
     return response
 
 
@@ -272,7 +303,7 @@ def _Circular_DoG__i_rotation_cosfire(self, image, operator, response_bank, **kw
 
 def _Circular_Gabor__i_reflection_cosfire(self, image, operator, response_bank, **kwargs):
     maximum_output = self.i_rotation_cosfire(image, operator, response_bank, **kwargs)
-    if self.reflection_invariant == 1:
+    if self.reflection_invariant:
         operatorI = [CosfireCircularGaborTuple(λ=tupla.λ, θ=π - tupla.θ, ρ=tupla.ρ, ϕ=π - tupla.ϕ)
                      for tupla in operator]
         output = self.i_rotation_cosfire(image, operatorI, response_bank, **kwargs)
@@ -280,15 +311,20 @@ def _Circular_Gabor__i_reflection_cosfire(self, image, operator, response_bank, 
     return maximum_output
 
 
-def _Circular_DoG__i_reflection_cosfire(self, image, operator, response_bank, **kwargs):  # pure imagination
-    return self.i_rotation_cosfire(image, operator, response_bank, **kwargs)
+def _Circular_DoG__i_reflection_cosfire(self, image, operator, response_bank, **kwargs):
+    maximum_output = self.i_rotation_cosfire(image, operator, response_bank, **kwargs)
+    if self.reflection_invariant:
+        operatorI = [CosfireCircularDoGTuple(ρ=tupla.ρ, ϕ=π - tupla.ϕ, σ=tupla.σ) for tupla in operator]
+        output = self.i_rotation_cosfire(image, operatorI, response_bank, **kwargs)
+        maximum_output = np.maximum(output, maximum_output)
+    return maximum_output
 
 
 def _Circular_Gabor__blur_gaussian(self, bank, **kwargs):
     dic = {}
     for tupla in self._Sf_invariant:
         σ = self.alpha * tupla.ρ + self.σ0
-        dic[tupla] = cv2.GaussianBlur(bank[(tupla.θ, tupla.λ)], (9, 9), σ, σ)
+        dic[tupla] = _gaussian_blur(bank[(tupla.θ, tupla.λ)], σ)
     return dic
 
 
@@ -296,14 +332,14 @@ def _Circular_DoG__blur_gaussian(self, bank, **kwargs):
     dic = {}
     for tupla in self._Sf_invariant:
         σ = self.alpha * tupla.ρ + self.σ0
-        dic[tupla] = cv2.GaussianBlur(bank[tupla.σ], (9, 9), σ, σ)
+        dic[tupla] = _gaussian_blur(bank[tupla.σ], σ)
     return dic
 
 
 def _Circular_Gabor__compute_tuples(self, inputImage, **kwargs):
     # Daniel: Aqui llamar funcion que rellena parametros para invarianzas
     operator = self._Sf[:]
-    if self.reflection_invariant == 1:
+    if self.reflection_invariant:
         operator += [CosfireCircularGaborTuple(λ=tupla.λ,
                                                θ=π - tupla.θ,
                                                ρ=tupla.ρ,
@@ -317,7 +353,7 @@ def _Circular_Gabor__compute_tuples(self, inputImage, **kwargs):
     unicos = {}
     for tupla in self._Sf_invariant:
         gabor_key = GaborKey(θ=tupla.θ, λ=tupla.λ)
-        if not gabor_key in unicos:
+        if gabor_key not in unicos:
             θ_array = np.array([gabor_key.θ])
             λ_array = np.array([gabor_key.λ])
             tt = self.compute_bank_of_responses(inputImage, θ_array=θ_array, λ_array=λ_array, **kwargs)
@@ -330,32 +366,26 @@ def _Circular_Gabor__compute_tuples(self, inputImage, **kwargs):
 
 
 def _Circular_DoG__compute_tuples(self, inputImage, **kwargs):
-    # Aqui llamar funcion que rellena parametros para invarianzas
     operator = self._Sf[:]
-    if self.reflection_invariant == 1:
-        operator += [CosfireCircularGaborTuple(λ=tupla.λ, θ=π - tupla.θ, ρ=tupla.ρ, ϕ=π - tupla.ϕ)
-                     for tupla in self._Sf]
+    if self.reflection_invariant:
+        operator += [CosfireCircularDoGTuple(ρ=tupla.ρ, ϕ=π - tupla.ϕ, σ=tupla.σ) for tupla in self._Sf]
 
     for tupla, rotation, scale in itertools.product(operator, self.rotation_invariant, self.scale_invariant):
-        new_tupla = CosfireCircularDoGTuple(ρ=tupla.ρ * scale, ϕ=tupla.ϕ + rotation, σ=tupla.σ * scale)
-        self._Sf_invariant.append(new_tupla)
+        self._Sf_invariant.append(CosfireCircularDoGTuple(ρ=tupla.ρ * scale, ϕ=tupla.ϕ + rotation, σ=tupla.σ * scale))
     unicos = {}
     for tupla in self._Sf_invariant:
-        if not tupla[2] in unicos:
-            l1 = np.array(1 * [tupla[2]])
-            tt = self.compute_bank_of_responses(inputImage, self.filter_parameters, l1)
-            unicos[tupla[2]] = tt[tupla[2]]
+        if tupla.σ not in unicos:
+            tt = self.compute_bank_of_responses(inputImage, σ_array=[tupla.σ], **kwargs)
+            unicos[tupla.σ] = tt[tupla.σ]
     maximum = max([value.max() for key, value in unicos.items()])
-    [cv2.threshold(src=image, dst=image, thresh=self.threshold_1 * maximum,
-                   maxval=maximum, type=cv2.THRESH_TOZERO)
+    [cv2.threshold(src=image, dst=image, thresh=self.threshold_1 * maximum, maxval=maximum, type=cv2.THRESH_TOZERO)
      for key, image in unicos.items()]
-    unicos = self.blur_gaussian(unicos)  ##2.1.1 Hacemos Blur
+    unicos = self.blur_gaussian(unicos)  # 2.1.1 Blur
     return unicos
 
 
 def _Circular_Gabor__fit_Sf(self, **kwargs):
     operator = []
-    ϕ_array = np.linspace(start=0, stop=2 * π, num=360, endpoint=False)
     for ρ in self.ρ_list:
         if ρ == 0:
             for gabor_key, response in self._prototype_bank.items():
@@ -363,17 +393,7 @@ def _Circular_Gabor__fit_Sf(self, **kwargs):
                 if response_at_ρ_ϕ > self._maximum_response * self.threshold_2:
                     operator.append(CosfireCircularGaborTuple(λ=gabor_key.λ, θ=gabor_key.θ, ρ=0, ϕ=0))
         elif ρ > 0:
-            pixel_at_ρ_ϕ_list = [Pixel(row=floor(self.center_x - ρ * sin(ϕ)), column=floor(self.center_y + ρ * cos(ϕ)))
-                                 for ϕ in ϕ_array]
-            maximum_responses_array = np.array([pixel_at_ρ_ϕ.maximum_response(bank=self._prototype_bank)
-                                                for pixel_at_ρ_ϕ in pixel_at_ρ_ϕ_list])
-            if len(np.unique(maximum_responses_array)) == 1:
-                continue
-            maximum_responses_array_augmented = np.zeros(maximum_responses_array.size + 1)
-            maximum_responses_array_augmented[0] = maximum_responses_array[-1]
-            maximum_responses_array_augmented[1:] = maximum_responses_array.copy()
-            response_peaks_index = - 1 + peakutils.peak.indexes(maximum_responses_array_augmented, thres=0.2,
-                                                                min_dist=22)  # 22=360/16
+            pixel_at_ρ_ϕ_list, response_peaks_index = _circle_peaks(self, ρ)
             for peak_index in response_peaks_index:
                 for θ in self.filter_parameters.θ:
                     maximum_response = 0
@@ -392,39 +412,18 @@ def _Circular_Gabor__fit_Sf(self, **kwargs):
 
 def _Circular_DoG__fit_Sf(self, **kwargs):
     operator = []
-    ϕ_array = np.linspace(start=0, stop=2 * π, num=360, endpoint=False)
     for ρ in self.ρ_list:
         if ρ == 0:
-            for σ in self.filter_parameters.σ:
-                response_at_center = self._prototype_bank[σ][self.center_x][self.center_y]
-                if response_at_center > self._maximum_response * self.threshold_2:
+            for σ, response in self._prototype_bank.items():
+                if response[self.center_x][self.center_y] > self._maximum_response * self.threshold_2:
                     operator.append(CosfireCircularDoGTuple(ρ=0, ϕ=0, σ=σ))
         elif ρ > 0:
-            listMax = np.zeros(360)
-            direcciones = []
-            for k, ϕ in enumerate(ϕ_array):
-                yi = floor(self.center_y + ρ * cos(ϕ))
-                xi = floor(self.center_x - ρ * sin(ϕ))
-                response_at_center = 0
-                rows, cols = self.prototype_image.shape
-                if xi >= 0 and yi >= 0 and xi < rows and yi < cols:
-                    for gabor_key, response in self.prototype_response_to_filters.items():
-                        if response[xi][yi] > response_at_center:
-                            response_at_center = response[xi][yi]
-                listMax[k] = response_at_center
-                direcciones.append((xi, yi))
-            if len(np.unique(listMax)) == 1:
-                continue
-            listMax1 = np.zeros(listMax.size + 1)
-            listMax1[1:] = listMax.copy()
-            index = peakutils.peak.indexes(listMax1, thres=0.2, min_dist=22)  # 22=360/16
-            index = list(index - 1)
-            index = np.array(index)
-            for k in range(index.size):
+            pixel_at_ρ_ϕ_list, response_peaks_index = _circle_peaks(self, ρ)
+            for peak_index in response_peaks_index:
+                peak_pixel = pixel_at_ρ_ϕ_list[peak_index]
                 for σ, response in self._prototype_bank.items():
-                    response_at_bearing = response[direcciones[index[k]][0]][direcciones[index[k]][1]]
-                    if response_at_bearing > self.threshold_2 * self._maximum_response:
-                        operator.append(CosfireCircularDoGTuple(ρ=ρ, ϕ=index[k] * (π / 180.0), σ=σ))
+                    if response[peak_pixel] > self.threshold_2 * self._maximum_response:
+                        operator.append(CosfireCircularDoGTuple(ρ=ρ, ϕ=peak_index * (π / 180.0), σ=σ))
     return operator
 
 
